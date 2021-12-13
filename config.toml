@@ -1,0 +1,10 @@
+[General]
+path = "{PATH}/{TO}/{BACKUP}/{REPO}"
+dry_run = false
+
+[Backup]
+remove = false
+
+[List]
+show_all = false
+repo_path = false
