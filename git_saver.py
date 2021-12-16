@@ -1,7 +1,8 @@
 from pathlib import Path
+
 from git import Repo
 
-from wrappers import maybe_dry, DryRunnable
+from wrappers import DryRunnable, maybe_dry
 
 COMMIT_MESSAGE = "something changed"
 
@@ -18,7 +19,7 @@ class Git(DryRunnable):
         # add custom commit message
         message = input("Write custom commit message (or enter to skip): ")
         message = COMMIT_MESSAGE if message == "" else message
-        
+
         # add files to commit
         self.repo.git.add(all=True)
 
@@ -29,22 +30,22 @@ class Git(DryRunnable):
         self.repo.remote().push()
 
     def push_to_repo(self) -> None:
-        if self.repo.is_dirty(untracked_files = True):
+        if self.repo.is_dirty(untracked_files=True):
             untracked_files = self.repo.untracked_files
             diffs = self.repo.index.diff(None)
 
             if untracked_files:
                 print("\nAdding new files:")
                 for f in untracked_files:
-                    print(f'+ {f}')
+                    print(f"+ {f}")
 
             deleted = diffs.iter_change_type("D")
             if list(deleted):
                 print("\nDeleting files")
                 for obj in diffs.iter_change_type("D"):
-                    print(f'- {obj.b_path}')
+                    print(f"- {obj.b_path}")
 
-            changed =  [d for d in diffs if d.change_type != "D"]
+            changed = [d for d in diffs if d.change_type != "D"]
             if len(changed):
                 print("\nChanging files")
                 for diff in changed:

@@ -1,16 +1,18 @@
-import os
-from pathlib import Path
-import shutil
 import filecmp
+import os
+import shutil
+from pathlib import Path
 
-from wrappers import maybe_dry, DryRunnable
 from git_saver import Git
+from wrappers import DryRunnable, maybe_dry
 
 HOME = "home"
 
 
 class Backuper(DryRunnable):
-    def __init__(self, path: Path, delete_unpresent: bool=False, dry_run: bool=False) -> None:
+    def __init__(
+        self, path: Path, delete_unpresent: bool = False, dry_run: bool = False
+    ) -> None:
         self.git = Git(path, dry_run)
         self.delete_unpresent = delete_unpresent
 
@@ -25,7 +27,7 @@ class Backuper(DryRunnable):
             path = self.git.path.joinpath(HOME, fname.relative_to(Path.home()))
         except ValueError:
             path = self.git.path.joinpath(Path(str(fname)[1:]))
-            
+
         path.parent.mkdir(parents=True, exist_ok=True)
 
         self.copy(fname, path)
@@ -34,7 +36,7 @@ class Backuper(DryRunnable):
         self.git.push_to_repo()
 
     def print_files(self, print_all: bool, repo_pathes: bool) -> None:
-        print('\nFiles under backup controll:')
+        print("\nFiles under backup controll:")
         for f in self.files():
             f_inner, f_outer = self.absolute_pathes_from_inner(f)
 
@@ -45,7 +47,6 @@ class Backuper(DryRunnable):
                 continue
 
             print(str(f_inner)) if repo_pathes else print(str(f_outer))
-            
 
     def save_to_git(self) -> None:
         for inner_path in self.files():
@@ -54,7 +55,7 @@ class Backuper(DryRunnable):
             # delete files which presents in git, but not in the system
             # if --delete option is True
             if self.delete_unpresent and not outer_path.exists():
-                ok = input(f'Delete {inner_path} [y/N]? ')
+                ok = input(f"Delete {inner_path} [y/N]? ")
                 if ok in ("Y", "y", "yes"):
                     self.delete(inner_path)
 
@@ -70,20 +71,20 @@ class Backuper(DryRunnable):
         inner_path = self.git.path.joinpath(path)
 
         if str_path.startswith(HOME):
-            outer_path = str.replace(str_path, f'{HOME}/', "")
+            outer_path = str.replace(str_path, f"{HOME}/", "")
             outer_path = Path.home().joinpath(Path(outer_path))
 
         return inner_path, outer_path
 
     @maybe_dry
     def delete(self, fpath: Path) -> None:
-        print(f'deleting {fpath}')
-        
+        print(f"deleting {fpath}")
+
         fpath.unlink(missing_ok=True)
 
     @maybe_dry
     def copy(self, from_file: Path, to_file: Path) -> None:
-        print(f'copying from {from_file} to {to_file}')
+        print(f"copying from {from_file} to {to_file}")
 
         shutil.copy(from_file, to_file)
 
