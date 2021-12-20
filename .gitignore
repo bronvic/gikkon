@@ -1,3 +1,6 @@
 __pycache__/
+src/dependencies/
+target/
 
 poetry.lock
+requirements.txt

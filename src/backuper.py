@@ -23,14 +23,16 @@ class Backuper(DryRunnable):
         self.git.push_to_repo()
 
     def add(self, fname: Path) -> None:
+        fpath = fname.resolve()
+
         try:
-            path = self.git.path.joinpath(HOME, fname.relative_to(Path.home()))
+            path = self.git.path.joinpath(HOME, fpath.relative_to(Path.home()))
         except ValueError:
-            path = self.git.path.joinpath(Path(str(fname)[1:]))
+            path = self.git.path.joinpath(Path(str(fpath)[1:]))
 
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        self.copy(fname, path)
+        self.copy(fpath, path)
 
     def commit(self) -> None:
         self.git.push_to_repo()
