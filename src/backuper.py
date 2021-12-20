@@ -38,7 +38,7 @@ class Backuper(DryRunnable):
         self.git.push_to_repo()
 
     def print_files(self, print_all: bool, repo_pathes: bool) -> None:
-        print("\nFiles under backup controll:")
+        print("\nFiles under gikkon controll:")
         for f in self.files():
             f_inner, f_outer = self.absolute_pathes_from_inner(f)
 
