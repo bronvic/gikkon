@@ -8,16 +8,14 @@ pkgdesc="Backup tool for configs, which uses git as storage"
 arch=("any")
 url="https://github.com/bronvic/$pkgname"
 license=("MIT")
-depends=("python>=3.7.0")
-source=("$url/archive/refs/tags/$pkgname-$pkgver.tar.gz")
+depends=("python>=3.7.0" "python-pip" "sudo")
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
 sha256sums=("SKIP")
 
 build() {
-    cd "$srcdir/$pkgname-$pkgver"
-    make build
+    make --directory="$srcdir/$pkgname-$pkgver" build
 }
 
 package() {
-    cd "$srcdir/$pkgname-$pkgver"
-    make install
+    make --directory="$srcdir/$pkgname-$pkgver" install
 }
