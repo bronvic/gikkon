@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "gikkon"
-version = "0.1.1"
+version = "0.1.0"
 description = "Backup your system configs and keep them up to date"
 authors = ["Voronwe <Voronwe.S@protonmail.com>"]
 license = "MIT"
