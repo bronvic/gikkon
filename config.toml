@@ -1,5 +1,5 @@
 [General]
-path = "{PATH}/{TO}/{BACKUP}/{REPO}"
+path = "/{PATH}/{TO}/{BACKUP}/{REPO}"
 dry_run = false
 
 [Backup]

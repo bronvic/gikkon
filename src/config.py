@@ -36,6 +36,9 @@ class Config:
         self.config = toml.load(config_path)
 
         self.git_path = args.get("path") or Path(self.get_variable("General", "path"))
+        if not self.git_path.exists():
+            raise WrongGitPath(self.git_path)
+
         self.dry_run = args.get("dry_run") or self.get_variable(
             "General", "dry_run", False
         )
@@ -62,4 +65,8 @@ class Config:
 
 
 class VariableRequired(Exception):
+    pass
+
+
+class WrongGitPath(Exception):
     pass
