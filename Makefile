@@ -8,12 +8,11 @@ CON_PATH = $${HOME}/.config/$(NAME)
 TGT_PATH = target
 
 update:
-	poetry shell
 	poetry update
 	poetry export --without-hashes > requirements.txt
 	python -m pip install --upgrade -r requirements.txt --target $(DEP_PATH)
 
-build: update
+build:
 	$(eval tmp_dir := $(shell mktemp -d --suffix="_gikkon"))
 	cp $(SRC_PATH)/*.py $(tmp_dir)
 	cp -r $(DEP_PATH)/* $(tmp_dir)
@@ -25,7 +24,9 @@ build: update
 
 	rm -r $(tmp_dir)
 
-install: build
+install:
 	mkdir -p $(CON_PATH)
 	test -f $(CON_PATH)/$(CON_NAME) || cp ./$(CON_NAME) $(CON_PATH)
-	sudo cp $(TGT_PATH)/$(NAME) $(SYS_PATH)
+	install $(TGT_PATH)/$(NAME) $(SYS_PATH)
+
+all: update build install

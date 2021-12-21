@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 
 from backuper import Backuper
-from config import Commands, Config, VariableRequired
+from config import Commands, Config, VariableRequired, WrongGitPath
 
 
 def main() -> None:
@@ -67,6 +67,14 @@ def main() -> None:
     except VariableRequired as ex:
         parser.print_usage()
         parser.exit(-1, f"main.py: error: the following arguments are required: {ex}\n")
+    except WrongGitPath as ex:
+        parser.exit(
+            -2,
+            f"\
+            Wrong path to git repo: '{ex}'\n\
+            Change path variable in config file (~/.config/gikkon/config.toml by default)\n\
+            Or use '--path' option\n",
+        )
 
     backuper = Backuper(
         path=config.git_path, dry_run=config.dry_run, delete_unpresent=config.remove
