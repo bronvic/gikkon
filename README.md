@@ -1,6 +1,8 @@
 # Gikkon
 Automate saving configs into git repository. Here and below *git repo* means you local copy of git repository with backup copies of files
 
+[![coverage](https://codecov.io/gh/bronvic/gikkon/branch/main/graph/badge.svg?token=FLC476YZTB)](https://codecov.io/gh/bronvic/gikkon)
+
 # Usage
 * List files under gikkon control
 ```
@@ -26,8 +28,10 @@ See `gikkon --help` or `gikkon <command> --help` for more detailes
 * poetry >= 1.0
 
 # Installation
-* Simply run `make install`
+* Simply run `make all`
 * **Change `path` in config file (`$HOME/.config/gikkon/config.toml` by defalt) to path to your git repo for backups**
+
+There is a [package](https://aur.archlinux.org/packages/gikkon/) for lucky Arch users
 
 # See my config repo =^.^=
 https://github.com/bronvic/config
