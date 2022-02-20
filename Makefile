@@ -9,11 +9,13 @@ TGT_PATH = target
 update:
 	poetry update
 	poetry export --without-hashes > requirements.txt
+	poetry env remove
 
 build:
 	$(eval tmp_dir := $(shell mktemp -d --suffix="_gikkon"))
 	cp $(SRC_PATH)/*.py $(tmp_dir)
 	python -m pip install --upgrade -r requirements.txt --target $(tmp_dir)
+	rm requirements.txt
 	
 	mkdir -p $(TGT_PATH)
 	python -m zipapp -o $(NAME) -p "/usr/bin/env python" $(tmp_dir)
