@@ -1,12 +1,16 @@
 import filecmp
 import os
 import shutil
+from collections import namedtuple
 from pathlib import Path
 
 from git_saver import Git
 from wrappers import DryRunnable, maybe_dry
 
 HOME = "home"
+
+
+Pathes = namedtuple("Pathes", ["inner", "outer"])
 
 
 class Backuper(DryRunnable):
@@ -25,10 +29,9 @@ class Backuper(DryRunnable):
     def add(self, fname: Path) -> None:
         fpath = fname.resolve()
 
-        try:
+        path = self.git.path.joinpath(Path(str(fpath)[1:]))
+        if fpath.is_relative_to(Path.home()):
             path = self.git.path.joinpath(HOME, fpath.relative_to(Path.home()))
-        except ValueError:
-            path = self.git.path.joinpath(Path(str(fpath)[1:]))
 
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -40,33 +43,33 @@ class Backuper(DryRunnable):
     def print_files(self, print_all: bool, repo_pathes: bool) -> None:
         print("\nFiles under gikkon controll:")
         for f in self.files():
-            f_inner, f_outer = self.absolute_pathes_from_inner(f)
+            pathes = self.absolute_pathes_from_inner(f)
 
-            if not repo_pathes and not f_outer.is_file():
+            if not repo_pathes and not pathes.outer.is_file():
                 continue
 
-            if repo_pathes and not print_all and not f_outer.is_file():
+            if repo_pathes and not print_all and not pathes.outer.is_file():
                 continue
 
-            print(str(f_inner)) if repo_pathes else print(str(f_outer))
+            print(str(pathes.inner)) if repo_pathes else print(str(pathes.outer))
 
     def save_to_git(self) -> None:
         for inner_path in self.files():
-            inner_path, outer_path = self.absolute_pathes_from_inner(inner_path)
+            pathes = self.absolute_pathes_from_inner(inner_path)
 
             # delete files which presents in git, but not in the system
             # if --delete option is True
-            if self.delete_unpresent and not outer_path.exists():
-                ok = input(f"Delete {inner_path} [y/N]? ")
+            if self.delete_unpresent and not pathes.outer.exists():
+                ok = input(f"Delete {pathes.inner} [y/N]? ")
                 if ok in ("Y", "y", "yes"):
-                    self.delete(inner_path)
+                    self.delete(pathes.inner)
 
-            if outer_path.exists() and outer_path.is_file():
-                if not filecmp.cmp(outer_path, inner_path):
-                    self.copy(outer_path, inner_path)
+            if pathes.outer.exists() and pathes.outer.is_file():
+                if not filecmp.cmp(pathes.outer, pathes.inner):
+                    self.copy(pathes.outer, pathes.inner)
 
     # return: inner, outer
-    def absolute_pathes_from_inner(self, path: Path) -> (Path, Path):
+    def absolute_pathes_from_inner(self, path: Path) -> Pathes:
         str_path = str(path)
 
         outer_path = Path("/").joinpath(path)
@@ -76,7 +79,7 @@ class Backuper(DryRunnable):
             outer_path = str.replace(str_path, f"{HOME}/", "")
             outer_path = Path.home().joinpath(Path(outer_path))
 
-        return inner_path, outer_path
+        return Pathes(inner=inner_path, outer=outer_path)
 
     @maybe_dry
     def delete(self, fpath: Path) -> None:

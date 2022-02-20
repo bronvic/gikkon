@@ -2,7 +2,7 @@ from pathlib import Path
 
 from git import Repo
 
-from wrappers import DryRunnable, maybe_dry
+from src.wrappers import DryRunnable, maybe_dry
 
 COMMIT_MESSAGE = "something changed"
 
