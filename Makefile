@@ -9,7 +9,7 @@ TGT_PATH = target
 update:
 	poetry update
 	poetry export --without-hashes > requirements.txt
-	poetry env remove
+	poetry env remove $(shell python --version | sed 's/^Python //' | sed 's/\.[0-9]\+//2')
 
 build:
 	$(eval tmp_dir := $(shell mktemp -d --suffix="_gikkon"))
