@@ -1,30 +1,27 @@
 import filecmp
 import os
 import shutil
+import subprocess
+import sys
 from collections import namedtuple
 from pathlib import Path
+from typing import Optional
 
-from git_saver import Git
-from wrappers import DryRunnable, maybe_dry
+from git_wrapper import GitWrapper
+from interactor import UserInput
+from validator import YES_VARIANTS
+import user_texts
+
+
 
 HOME = "home"
+Paths = namedtuple("Paths", ["inner", "outer"])
 
 
-Pathes = namedtuple("Pathes", ["inner", "outer"])
-
-
-class Backuper(DryRunnable):
-    def __init__(
-        self, path: Path, delete_unpresent: bool = False, dry_run: bool = False
-    ) -> None:
-        self.git = Git(path, dry_run)
-        self.delete_unpresent = delete_unpresent
-
-        super().__init__(dry_run)
-
-    def backup(self) -> None:
-        self.save_to_git()
-        self.git.push_to_repo()
+class Backuper:
+    def __init__(self, path: Path, dry_run: bool = False) -> None:
+        self.git = GitWrapper(path)
+        self.dry_run = dry_run
 
     def add(self, fname: Path) -> None:
         fpath = fname.resolve()
@@ -33,43 +30,63 @@ class Backuper(DryRunnable):
         if fpath.is_relative_to(Path.home()):
             path = self.git.path.joinpath(HOME, fpath.relative_to(Path.home()))
 
+        if self.dry_run:
+            if not path.parent.is_dir():
+                print(f"Dry run: Creating directory {path.parent.resolve()}")
+            
+            print(f"Dry run: Copying {fpath} to {path}")
+
+            return
+
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        self.copy(fpath, path)
+        self._copy(fpath, path)
 
-    def commit(self) -> None:
-        self.git.push_to_repo()
 
-    def print_files(self, print_all: bool, repo_pathes: bool) -> None:
-        print("\nFiles under gikkon controll:")
-        for f in self.files():
-            pathes = self.absolute_pathes_from_inner(f)
+    def backup(self, ask_rollback: bool = True, delete_not_present = False) -> None:
+        self.git.ensure_push()
 
-            if not repo_pathes and not pathes.outer.is_file():
-                continue
+        self._copy_files(delete_not_present)
 
-            if repo_pathes and not print_all and not pathes.outer.is_file():
-                continue
+        if self.git.show_changes():
+            if self.dry_run:
+                print("Dry run: commit and push changes")
 
-            print(str(pathes.inner)) if repo_pathes else print(str(pathes.outer))
+                return
 
-    def save_to_git(self) -> None:
-        for inner_path in self.files():
-            pathes = self.absolute_pathes_from_inner(inner_path)
+            if UserInput.ask_bool(user_texts.accept_changes, default=True):
+                self.git.commit_and_push()
 
-            # delete files which presents in git, but not in the system
-            # if --delete option is True
-            if self.delete_unpresent and not pathes.outer.exists():
-                ok = input(f"Delete {pathes.inner} [y/N]? ")
-                if ok in ("Y", "y", "yes"):
-                    self.delete(pathes.inner)
+                return
 
-            if pathes.outer.exists() and pathes.outer.is_file():
-                if not filecmp.cmp(pathes.outer, pathes.inner):
-                    self.copy(pathes.outer, pathes.inner)
+            print(f'ask_rollback: {ask_rollback}')
+            if ask_rollback and UserInput.ask_bool(user_texts.revert_changes, default=False):
+                changed_files = self.git.get_changed_files()
+                files_to_revert = self._select_files_to_revert(changed_files)
+                self.git.discard_changes()
+                self._revert_files(files_to_revert)
+                
+            print("Abort changes")
 
-    # return: inner, outer
-    def absolute_pathes_from_inner(self, path: Path) -> Pathes:
+
+    def print_files(self, print_all: bool, repo_paths: bool) -> None:
+        files_list = list(self.git.files())
+
+        filtered_files = [
+            str(paths.inner) if repo_paths else str(paths.outer)
+            for f in files_list
+            for paths in [self._absolute_paths_from_inner(f)]
+            if (not repo_paths and paths.outer.is_file()) or (repo_paths and (print_all or paths.outer.is_file()))
+        ]
+
+        if not filtered_files:
+            print("\nNo files under gikkon control")
+        else:
+            print("\nFiles under gikkon control:")
+            for file_path in filtered_files:
+                print(file_path)
+
+    def _absolute_paths_from_inner(self, path: Path) -> Paths:
         str_path = str(path)
 
         outer_path = Path("/").joinpath(path)
@@ -79,25 +96,78 @@ class Backuper(DryRunnable):
             outer_path = str.replace(str_path, f"{HOME}/", "")
             outer_path = Path.home().joinpath(Path(outer_path))
 
-        return Pathes(inner=inner_path, outer=outer_path)
+        return Paths(inner=inner_path, outer=outer_path)
 
-    @maybe_dry
-    def delete(self, fpath: Path) -> None:
-        print(f"deleting {fpath}")
+    def _copy_files(self, delete_not_present=False) -> None:
+        for inner_path in self.git.files():
+            paths = self._absolute_paths_from_inner(inner_path)
 
-        fpath.unlink(missing_ok=True)
+            if delete_not_present and not paths.outer.exists():
+                ok = input(f"Delete {paths.inner} [y/N]? ").lower()
+                if ok in YES_VARIANTS:
+                    self._delete_file(paths.inner)
 
-    @maybe_dry
-    def copy(self, from_file: Path, to_file: Path) -> None:
-        print(f"copying from {from_file} to {to_file}")
+            if paths.outer.exists() and paths.outer.is_file():
+                if not filecmp.cmp(paths.outer, paths.inner):
+                    self._copy(paths.outer, paths.inner)
 
+    def _copy(self, from_file: Path, to_file: Path) -> None:
         shutil.copy(from_file, to_file)
 
-    def files(self) -> Path:
-        # Exclude .git files from backuping
-        excluded = (".git", ".gitignore")
-        for dirpath, dirs, files in os.walk(self.git.path):
-            dirs[:] = [d for d in dirs if not d in excluded]
+    def _revert_files(self, files: list[tuple[str, Path]]) -> None:
+        for status, file in files:
+            inner_path, outer_path = self._absolute_paths_from_inner(Path(file))
 
-            for filename in files:
-                yield Path(os.path.join(dirpath, filename)).relative_to(self.git.path)
+            if status == "?":
+                self._delete_file(inner_path)
+            else:
+                self._copy_file(inner_path, outer_path)
+
+    def _select_files_to_revert(self, changed_files: list[tuple[str, Path]]) -> list[tuple[str, Path]]:
+        print("\nSelect files to revert (use space-separated file numbers, press Enter for all, or type 'q' to quit):")
+        for i, (_, file) in enumerate(changed_files, start=1):
+            print(f"{i}. {file}")
+
+        selected_indices = input("Enter file numbers, press Enter for all, or type 'q' to quit: ")
+
+        if selected_indices.strip() == "":
+            return changed_files
+        elif selected_indices.lower() == "q":
+            return []
+
+        indices = [int(index) - 1 for index in selected_indices.split() if index.isdigit()]
+
+        return [changed_files[i] for i in indices if 0 <= i < len(changed_files)]
+
+    def _has_write_access(self, file_path):
+        return os.access(file_path, os.W_OK)
+
+    def _copy_file_with_sudo(self, src, dst):
+        print(f"copying from {src} to {dst}")
+        try:
+            subprocess.check_call(["sudo", "cp", src, dst])
+        except subprocess.CalledProcessError as e:
+            print(f"Error: Failed to copy file with sudo: {e}")
+            sys.exit(1)
+
+    def _copy_file(self, src, dst):
+        print(f"copying from {src} to {dst}")
+
+        if not self._has_write_access(dst):
+            self._copy_file_with_sudo(src, dst)
+        else:
+            self._copy(src, dst)
+
+    def _delete_file_with_sudo(self, file_path):
+        try:
+            subprocess.check_call(["sudo", "rm", file_path])
+        except subprocess.CalledProcessError as e:
+            print(f"Error: Failed to delete file with sudo: {e}")
+            sys.exit(1)
+
+    def _delete_file(self, file_path):
+        print(f"removing {file_path}")
+        if not self._has_write_access(file_path):
+            self._delete_file_with_sudo(file_path)
+        else:
+            os.remove(file_path)

@@ -1,12 +1,15 @@
-import importlib
-import sys
 from pathlib import Path
-from unittest import SkipTest, TestCase
+from unittest import TestCase
 from unittest.mock import Mock, PropertyMock, call, patch
 
 from parameterized import parameterized
 
-from backuper import Backuper, Pathes
+import user_texts
+from backuper import Backuper, Paths
+from validator import YES_VARIANTS, Validator
+
+FILE_1 = Path("file1")
+FILE_2 = Path("file2")
 
 
 class TestBackuper(TestCase):
@@ -31,18 +34,8 @@ class TestInit(TestBackuper):
         backuper = Backuper(self.path, delete, dry)
 
         mock_git.assert_called_once_with(self.path, dry)
-        self.assertEqual(backuper.delete_unpresent, delete)
+        self.assertEqual(backuper.delete_not_present, delete)
         self.assertEqual(backuper.dry_run, dry)
-
-
-class TestBackup(TestBackuper):
-    @patch("backuper.Backuper.save_to_git")
-    def test_backup(self, mock_save):
-
-        self.backuper.backup()
-
-        mock_save.assert_called_once()
-        self.backuper.git.push_to_repo.assert_called_once()
 
 
 class TestAdd(TestBackuper):
@@ -66,7 +59,7 @@ class TestAdd(TestBackuper):
         ]
     )
     @patch("backuper.Path.mkdir")
-    @patch("backuper.Backuper.copy")
+    @patch("backuper.Backuper._copy")
     def test_add(self, _, path_in, path_out, mock_copy, mock_mkdir):
         mock_path = Mock()
         mock_path.resolve = path_in
@@ -78,116 +71,170 @@ class TestAdd(TestBackuper):
         mock_copy.assert_called_once_with(mock_path.resolve.return_value, path_out)
 
 
-class TestCommit(TestBackuper):
-    def test_commit(self):
-        self.backuper.commit()
-
-        self.backuper.git.push_to_repo.assert_called_once()
-
-
 class TestPrintFiles(TestBackuper):
     @classmethod
     def setUpClass(cls):
         cls.skipTest(cls, "logger does not implemented")
 
 
-FILE_1 = Path("file1")
-FILE_2 = Path("file2")
-INNER_PATH = Path("inner_path")
-OUTER_PATH = Path("outer_path")
+class TestBackupBasic(TestBackuper):
+    def setUp(self):
+        super().setUp()
+
+        self.mock_diff = Mock()
+        self.backuper.git.diff = Mock(return_value=self.mock_diff)
+
+    @staticmethod
+    def _assert_rollback_not_called(mock_rollback, mock_ask_rollback):
+        mock_ask_rollback.assert_not_called()
+        mock_rollback.assert_not_called()
+
+    def _assert_copy_diff(self, mock_copy):
+        mock_copy.assert_called_once()
+        self.backuper.git.diff.assert_called_once()
 
 
-@patch("backuper.Backuper.files", return_value=[FILE_1, FILE_2])
-@patch(
-    "backuper.Backuper.absolute_pathes_from_inner",
-    return_value=Pathes(INNER_PATH, OUTER_PATH),
-)
-class TestSaveToGit(TestBackuper):
-    def test_no_files(self, _, mock_files):
-        mock_files.return_value = []
-        self.backuper.save_to_git()
+@patch("backuper.Backuper.copy")
+@patch("backuper.interactor.ask_bool")
+@patch("backuper.interactor.ask_rollback")
+@patch("backuper.Backuper.rollback")
+class TestBackup(TestBackupBasic):
+    def test_no_files(self, mock_rollback, mock_ask_rollback, mock_ask_accept, mock_copy):
+        self.mock_diff.is_empty = True
 
-    @patch("backuper.Path.exists", return_value=False)
-    def test_outer_path_does_not_exists(self, mock_exists, mock_absolute, _):
-        self.backuper.save_to_git()
+        self.backuper.backup()
 
-        mock_absolute.assert_has_calls([call(FILE_1), call(FILE_2)])
-        self.assertEqual(mock_exists.call_count, 2)
+        self._assert_copy_diff(mock_copy)
+        mock_ask_accept.assert_not_called()
+        self._assert_rollback_not_called(mock_rollback, mock_ask_rollback)
 
-    @parameterized.expand(
-        [
-            (
-                "delete yes",
-                "Y",
-                True,
-            ),
-            (
-                "delete no",
-                "nononono",
-                False,
-            ),
-        ]
-    )
-    @patch("backuper.Path.exists", return_value=False)
-    @patch("backuper.filecmp.cmp")
-    @patch("backuper.Backuper.delete")
-    @patch("builtins.input")
-    def test_delete(
-        self,
-        _,
-        user_input,
-        delete_expected,
-        mock_input,
-        mock_delete,
-        mock_cmp,
-        mock_exists,
-        mock_absolute,
-        mock_files,
-    ):
-        self.backuper.delete_unpresent = True
-        mock_input.return_value = user_input
+    def test_backup(self, mock_rollback, mock_ask_rollback, mock_ask_accept, mock_copy):
+        self.mock_diff.is_empty = False
+        mock_ask_accept.return_value = True
 
-        self.backuper.save_to_git()
+        self.backuper.backup()
 
-        self.assertEqual(mock_input.call_count, 2)
-        mock_cmp.assert_not_called()
-        if delete_expected:
-            mock_delete.assert_has_calls([call(INNER_PATH)] * 2)
-        else:
-            mock_delete.assert_not_called()
+        self._assert_copy_diff(mock_copy)
+        mock_ask_accept.assert_called_once_with(user_texts.accept_changes, default=True)
+        self.backuper.git.load_to_remote.assert_called_once()
+        self._assert_rollback_not_called(mock_rollback, mock_ask_rollback)
 
-    @patch("backuper.Path.exists", return_value=False)
-    @patch("backuper.filecmp.cmp")
-    def test_outer_not_file(self, mock_cmp, mock_exists, mock_absolute, mock_files):
-        self.backuper.save_to_git()
 
-        mock_cmp.assert_not_called()
+@patch("backuper.Backuper.copy")
+@patch("backuper.interactor.ask_bool")
+@patch("backuper.interactor.ask_rollback")
+@patch("backuper.Backuper.rollback")
+class TestBackupAndRollbackReject(TestBackupBasic):
+    def setUp(self):
+        super().setUp()
 
-    @patch("backuper.Path.exists", return_value=True)
-    @patch("backuper.Path.is_file", return_value=True)
-    @patch("backuper.filecmp.cmp", return_value=False)
-    @patch("backuper.Backuper.copy")
-    def test_cmp_different(
-        self, mock_copy, mock_cmp, mock_is_file, mock_exists, mock_absolute, mock_files
-    ):
-        self.backuper.save_to_git()
+        self.mock_diff.is_empty = False
 
-        mock_copy.assert_has_calls([call(OUTER_PATH, INNER_PATH)] * 2)
+    def test_ask_disabled(self, mock_rollback, mock_ask_rollback, mock_ask_accept, mock_copy):
+        mock_ask_accept.return_value = False
+
+        self.backuper.backup(ask_rollback=False)
+
+        self._assert_copy_diff(mock_copy)
+        mock_ask_accept.assert_called_once_with(user_texts.accept_changes, default=True)
+        self._assert_rollback_not_called(mock_rollback, mock_ask_rollback)
+
+    def test_rejected(self, mock_rollback, mock_ask_rollback, mock_ask_bool, mock_copy):
+        mock_ask_bool.side_effect = [False, False]
+
+        self.backuper.backup(ask_rollback=True)
+
+        self._assert_copy_diff(mock_copy)
+        self.assertListEqual(
+            mock_ask_bool.call_args_list,
+            [
+                call(user_texts.accept_changes, default=True),
+                call(user_texts.rollback_changes, default=True),
+            ],
+        )
+        self._assert_rollback_not_called(mock_rollback, mock_ask_rollback)
+
+
+@patch("backuper.Backuper.copy")
+@patch("backuper.interactor.ask_bool", side_effect=[False, True])
+@patch("backuper.interactor.ask_rollback")
+@patch("backuper.Backuper.rollback")
+@patch("backuper.Validator")
+class TestBackupRejectedRollbackAccepted(TestBackupBasic):
+    def setUp(self):
+        super().setUp()
+
+        self.mock_diff.is_empty = False
+        self.mock_diff.untracked_and_changed = ["a", "b", "c"]
+
+    def _assert_ask(self, mock_ask_bool, mock_ask_rollback, mock_validator):
+        self.assertListEqual(
+            mock_ask_bool.call_args_list,
+            [
+                call(user_texts.accept_changes, default=True),
+                call(user_texts.rollback_changes, default=True),
+            ],
+        )
+        mock_validator.assert_called_once_with(len(self.mock_diff.untracked_and_changed))
+        mock_ask_rollback.assert_called_once_with(self.mock_diff.untracked_and_changed, validator=mock_validator())
+
+    def _assert_copy_diff_ask(self, mock_copy, mock_ask_bool, mock_ask_rollback, mock_validator):
+        self._assert_copy_diff(mock_copy)
+        self._assert_ask(mock_ask_bool, mock_ask_rollback, mock_validator)
+
+    def test_reject(self, mock_validator, mock_rollback, mock_ask_rollback, mock_ask_bool, mock_copy):
+        mock_ask_rollback.return_value = ([], False)
+        self.backuper.backup(ask_rollback=True)
+
+        self._assert_copy_diff_ask(mock_copy, mock_ask_bool, mock_ask_rollback, mock_validator)
+        mock_rollback.assert_not_called()
+
+    def test_rollback(self, mock_validator, mock_rollback, mock_ask_rollback, mock_ask_bool, mock_copy):
+        ids = [1, 2, 3]
+        diffs = ["one", "two"]
+        mock_ask_rollback.return_value = (ids, True)
+        self.mock_diff.by_indexes = Mock(return_value=diffs)
+
+        self.backuper.backup(ask_rollback=True)
+
+        self._assert_copy_diff_ask(mock_copy, mock_ask_bool, mock_ask_rollback, mock_validator)
+        self.mock_diff.by_indexes.assert_called_once_with(ids)
+        mock_rollback.assert_called_once_with(diffs)
+
+
+@patch("backuper.Backuper._copy")
+class TestRollback(TestBackuper):
+    @patch("backuper.Backuper.absolute_paths_from_inner")
+    def test_rollback(self, mock_path, mock_copy):
+        files = [FILE_1, FILE_2]
+        inner_files = map(lambda fname: f"/inner{fname}", files)
+        mock_path.side_effect = map(lambda xy: Paths(inner=xy[1], outer=xy[0]), zip(files, inner_files))
+
+        self.backuper.rollback(files)
+
+        mock_copy.assert_has_calls(map(lambda xy: call(xy[1], f"/{xy[0]}"), zip(files, inner_files)))
+
+    def test_rollback_no_files(self, mock_copy):
+        files = []
+
+        self.backuper.rollback(files)
+
+        mock_copy.assert_not_called()
 
 
 class TestAbsolutePath(TestBackuper):
     def test_absolute_from_inner(self):
         path = FILE_1
-        pathes = self.backuper.absolute_pathes_from_inner(path)
-        self.assertEqual(pathes.inner, self.backuper.git.path.joinpath(path))
-        self.assertEqual(pathes.outer, Path("/").joinpath(path))
+        paths = self.backuper.absolute_paths_from_inner(path)
+        self.assertEqual(paths.inner, self.backuper.git.path.joinpath(path))
+        self.assertEqual(paths.outer, Path("/").joinpath(path))
 
     def test_absolute_from_inner_home(self):
         path = Path.home().joinpath(FILE_2)
 
-        pathes = self.backuper.absolute_pathes_from_inner(path)
-        self.assertEqual(pathes.inner, self.backuper.git.path.joinpath(path))
-        self.assertEqual(pathes.outer, path)
+        paths = self.backuper.absolute_paths_from_inner(path)
+        self.assertEqual(paths.inner, self.backuper.git.path.joinpath(path))
+        self.assertEqual(paths.outer, path)
 
 
 class TestDelete(TestBackuper):
@@ -198,13 +245,141 @@ class TestDelete(TestBackuper):
         mock_unlink.assert_called_once_with(missing_ok=True)
 
 
+@patch("backuper.Backuper._copy")
+@patch("backuper.Backuper.delete")
+@patch("backuper.Backuper.files", return_value=[FILE_1])
+@patch(
+    "backuper.Backuper.absolute_paths_from_inner",
+    return_value=Paths(inner=FILE_1, outer=FILE_2),
+)
 class TestCopy(TestBackuper):
+    def test_no_files(self, mock_absolute, mock_files, mock_delete, mock_copy):
+        mock_files.return_value = []
+
+        self.backuper.copy()
+
+        mock_delete.assert_not_called()
+        mock_copy.assert_not_called()
+
+    @patch("backuper.Path.exists", return_value=True)
+    @patch("backuper.Path.is_file", return_value=False)
+    def test_delete_not_present_false(
+        self,
+        mock_is_file,
+        mock_exists,
+        mock_absolute,
+        mock_files,
+        mock_delete,
+        mock_copy,
+    ):
+        self.backuper.copy()
+
+        mock_delete.assert_not_called()
+        mock_copy.assert_not_called()
+
+    @patch("backuper.Path.exists", return_value=True)
+    def test_outer_path_does_not_exist(self, mock_exists, mock_absolute, mock_files, mock_delete, mock_copy):
+        self.backuper.delete_not_present = True
+
+        self.backuper.copy()
+
+        mock_exists.assert_called()
+        mock_delete.assert_not_called()
+        mock_copy.assert_not_called()
+
+    @patch("backuper.Path.exists", return_value=False)
+    @patch("backuper.Path.is_file", return_value=False)
+    @patch("builtins.input", return_value="fgkbhdk")
+    def test_delete_no(
+        self,
+        mock_input,
+        mock_is_file,
+        mock_exists,
+        mock_absolute,
+        mock_files,
+        mock_delete,
+        mock_copy,
+    ):
+        self.backuper.delete_not_present = True
+
+        self.backuper.copy()
+
+        mock_delete.assert_not_called()
+
+    @patch("backuper.Path.exists", return_value=False)
+    @patch("backuper.Path.is_file", return_value=False)
+    @patch("builtins.input", return_value=YES_VARIANTS[0])
+    def test_delete_yes(
+        self,
+        mock_input,
+        mock_is_file,
+        mock_exists,
+        mock_absolute,
+        mock_files,
+        mock_delete,
+        mock_copy,
+    ):
+        self.backuper.delete_not_present = True
+
+        self.backuper.copy()
+
+        mock_delete.assert_called_once_with(FILE_1)
+
+    @patch("backuper.Path.exists", return_value=True)
+    @patch("backuper.Path.is_file", return_value=False)
+    def test_outer_not_file(
+        self,
+        mock_is_file,
+        mock_exists,
+        mock_absolute,
+        mock_files,
+        mock_delete,
+        mock_copy,
+    ):
+        self.backuper.copy()
+
+        mock_copy.assert_not_called()
+
+    @patch("backuper.Path.exists", return_value=True)
+    @patch("backuper.Path.is_file", return_value=True)
+    @patch("backuper.filecmp.cmp", return_value=True)
+    def test_files_equal(
+        self,
+        mock_cmp,
+        mock_is_file,
+        mock_exists,
+        mock_absolute,
+        mock_files,
+        mock_delete,
+        mock_copy,
+    ):
+        self.backuper.copy()
+
+        mock_cmp.assert_called_once_with(FILE_2, FILE_1)
+        mock_copy.assert_not_called()
+
+    @patch("backuper.Path.exists", return_value=True)
+    @patch("backuper.Path.is_file", return_value=True)
+    @patch("backuper.filecmp.cmp", return_value=False)
+    def test_copy(
+        self,
+        mock_cmp,
+        mock_is_file,
+        mock_exists,
+        mock_absolute,
+        mock_files,
+        mock_delete,
+        mock_copy,
+    ):
+        self.backuper.copy()
+
+        mock_cmp.assert_called_once_with(FILE_2, FILE_1)
+        mock_copy.assert_called_once_with(FILE_2, FILE_1)
+
+
+class TestInnerCopy(TestBackuper):
     @patch("backuper.shutil.copy")
     def test_copy(self, mock_copy):
-        self.backuper.copy(FILE_1, FILE_2)
+        self.backuper._copy(FILE_1, FILE_2)
 
         mock_copy.assert_called_once_with(FILE_1, FILE_2)
-
-
-class TestFiles(TestBackuper):
-    pass

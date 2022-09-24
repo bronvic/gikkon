@@ -11,7 +11,7 @@ kwargs = {
     "dry_run": True,
     "remove": True,
     "show_all": True,
-    "repo_pathes": True,
+    "repo_paths": True,
     "command": "a command",
     "file": Path("file name"),
 }
@@ -22,13 +22,13 @@ class TestConfig(TestCase):
 
 
 @patch("config.toml.load", return_value="config")
-@patch("config.Config.get_variable", side_effect=["mypath"] + [False] * 4)
+@patch("config.Config.get_variable", side_effect=["mypath"] + [False] * 5)
 class TestInit(TestConfig):
     @patch("config.Path.exists", return_value=True)
     def test_defaults(self, mock_git_path, mock_get, mock_load):
         config = Config({})
 
-        mock_load.assert_called_once_with(config.DEFAILT_PATH)
+        mock_load.assert_called_once_with(config.DEFAULT_PATH)
         mock_git_path.assert_called_once()
 
         self.assertEqual(config.config, "config")
@@ -36,7 +36,7 @@ class TestInit(TestConfig):
         self.assertFalse(config.dry_run)
         self.assertFalse(config.remove)
         self.assertFalse(config.show_all)
-        self.assertFalse(config.repo_pathes)
+        self.assertFalse(config.repo_paths)
         self.assertIsNone(config.command)
         self.assertIsNone(config.fname)
 
@@ -50,14 +50,14 @@ class TestInit(TestConfig):
         self.assertEqual(config.dry_run, kwargs["dry_run"])
         self.assertEqual(config.remove, kwargs["remove"])
         self.assertEqual(config.show_all, kwargs["show_all"])
-        self.assertEqual(config.repo_pathes, kwargs["repo_pathes"])
+        self.assertEqual(config.repo_paths, kwargs["repo_paths"])
         self.assertEqual(config.command, kwargs["command"])
         self.assertEqual(config.fname, kwargs["file"])
 
     @patch("config.Path.exists", return_value=False)
     def test_wrong_git_path(self, mock_git_path, mock_get, mock_load):
         with self.assertRaises(WrongGitPath):
-            config = Config({})
+            Config({})
 
 
 class TestGetVariable(TestConfig):
@@ -69,9 +69,7 @@ class TestGetVariable(TestConfig):
 
     def test_ok(self):
         self.assertEqual(self.config.get_variable("First", "Second"), "Third")
-        self.assertEqual(
-            self.config.get_variable("First", "Kekond", "Fourth"), "Fourth"
-        )
+        self.assertEqual(self.config.get_variable("First", "Kekond", "Fourth"), "Fourth")
 
     def test_error(self):
         with self.assertRaises(VariableRequired):
