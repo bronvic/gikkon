@@ -6,8 +6,10 @@ SYS_PATH = /usr/bin
 CON_PATH = $${HOME}/.config/$(NAME)
 TGT_PATH = target
 
+all: update build install clean
+
 update:
-	poetry update
+	poetry update --no-dev
 	poetry export --without-hashes > requirements.txt
 
 build:
@@ -32,4 +34,3 @@ clean:
 	rm requirements.txt
 
 
-all: update build install clean
