@@ -1,210 +1,378 @@
-import importlib
-import sys
-from pathlib import Path
-from unittest import SkipTest, TestCase
-from unittest.mock import Mock, PropertyMock, call, patch
+import unittest
+from unittest.mock import PropertyMock, call
+from unittest.mock import patch
 
-from parameterized import parameterized
-
-from backuper import Backuper, Pathes
+from backuper import *
+from backuper import _copy, _select_files_to_revert, _copy_file, _copy_file_with_sudo, _delete_file, \
+    _delete_file_with_sudo
 
 
-class TestBackuper(TestCase):
-    path = Path("/dev/null")
+@patch("backuper._copy")
+@patch("pathlib.Path.mkdir")
+@patch("pathlib.Path.home", return_value=Path("/home/user"))
+@patch("pathlib.Path.joinpath", return_value=Path("/home/user/test/file.txt"))
+@patch("pathlib.Path.resolve", return_value=Path("/test/file.txt"))
+class TestAdd(unittest.TestCase):
 
-    def setUp(self):
-        with patch("backuper.Git") as _:
-            self.backuper = Backuper(self.path)
+    def setUp(self) -> None:
+        self.backuper = Backuper(Path("/backup"))
+
+    @patch("builtins.print")
+    @patch("pathlib.Path.parent", new_callable=PropertyMock)
+    @patch("pathlib.Path.is_relative_to", return_value=False)
+    def test_dry_run(self, path_is_relative_to_mock,
+                     path_parent_mock, print_mock, path_resolve_mock, path_joinpath_mock, path_home_mock,
+                     path_mkdir_mock, copy_mock):
+        self.backuper.dry_run = True
+
+        self.backuper.add(Path("test.txt"))
+
+        path_resolve_mock.assert_called_once()
+        path_joinpath_mock.assert_called_once_with(Path("test/file.txt"))
+        path_is_relative_to_mock.assert_called_once_with(path_home_mock.return_value)
+        path_home_mock.assert_called_once()
+        path_parent_mock.assert_called_once()
+        print_mock.assert_called_once_with(
+            f"Dry run: Copying {path_resolve_mock.return_value} to {path_joinpath_mock.return_value}")
+        path_mkdir_mock.assert_not_called()
+        copy_mock.assert_not_called()
+
+    @patch("builtins.print")
+    @patch("pathlib.Path.is_dir")
+    @patch("pathlib.Path.is_relative_to", return_value=False)
+    def test_not_dry_run(self, _path_is_relative_to_mock,
+                         path_is_dir, print_mock, path_resolve_mock, path_joinpath_mock, _path_home_mock,
+                         path_mkdir_mock, copy_mock):
+        self.backuper.add(Path("test.txt"))
+
+        path_mkdir_mock.assert_called_once_with(parents=True, exist_ok=True)
+        copy_mock.assert_called_once_with(path_resolve_mock.return_value, path_joinpath_mock.return_value)
+
+        path_is_dir.assert_not_called()
+        print_mock.assert_not_called()
+
+    @patch("pathlib.Path.is_relative_to", return_value=True)
+    @patch("pathlib.Path.relative_to", return_value=Path("test/file.txt"))
+    def test_home(self, mock_relative_to, _path_is_relative_to_mock,
+                  _path_resolve_mock, path_joinpath_mock, path_home_mock,
+                  path_mkdir_mock, copy_mock):
+        self.backuper.add(Path("test.txt"))
+
+        assert len(path_home_mock.call_args_list) == 2
+        assert len(path_joinpath_mock.call_args_list) == 2
+        assert path_joinpath_mock.call_args_list[0], call("test/file.txt")
+        assert path_joinpath_mock.call_args_list[0], call(HOME, mock_relative_to.return_value)
+
+        path_mkdir_mock.assert_called_once()
+        copy_mock.assert_called_once()
 
 
-class TestInit(TestBackuper):
-    @parameterized.expand(
-        [
-            ("not delete not dry", False, False),
-            ("not delete dry", False, True),
-            ("delete not dry", True, False),
-            ("delete dry", True, True),
+class TestPrintFiles(unittest.TestCase):
+
+    @patch("backuper.Path.is_file")
+    @patch("backuper.Backuper._absolute_paths_from_inner")
+    @patch("backuper.GitWrapper.files")
+    @patch("builtins.print")
+    def test_print_files_no_files(self, print_mock, git_files_mock, absolute_paths_mock, is_file_mock):
+        git_files_mock.return_value = []
+        backuper = Backuper(Path("/some/repo"))
+
+        backuper.print_files(print_all=False, repo_paths=False)
+
+        print_mock.assert_called_once_with("\nNo files under gikkon control")
+
+    @patch("backuper.Path.is_file")
+    @patch("backuper.Backuper._absolute_paths_from_inner")
+    @patch("backuper.GitWrapper.files")
+    @patch("builtins.print")
+    def test_print_files_some_files(self, print_mock, git_files_mock, absolute_paths_mock, is_file_mock):
+        git_files_mock.return_value = ["file1.txt", "file2.txt"]
+        absolute_paths_mock.side_effect = [
+            Paths(inner=Path("/some/repo/file1.txt"), outer=Path("/file1.txt")),
+            Paths(inner=Path("/some/repo/file2.txt"), outer=Path("/file2.txt")),
         ]
-    )
-    @patch("backuper.Git")
-    def test_init(self, _, delete, dry, mock_git):
-        backuper = Backuper(self.path, delete, dry)
+        is_file_mock.return_value = True
+        backuper = Backuper(Path("/some/repo"))
 
-        mock_git.assert_called_once_with(self.path, dry)
-        self.assertEqual(backuper.delete_unpresent, delete)
-        self.assertEqual(backuper.dry_run, dry)
+        backuper.print_files(print_all=False, repo_paths=False)
 
-
-class TestBackup(TestBackuper):
-    @patch("backuper.Backuper.save_to_git")
-    def test_backup(self, mock_save):
-
-        self.backuper.backup()
-
-        mock_save.assert_called_once()
-        self.backuper.git.push_to_repo.assert_called_once()
-
-
-class TestAdd(TestBackuper):
-    def setUp(self):
-        super().setUp()
-
-        type(self.backuper.git).path = PropertyMock(return_value=Path("/git/repo"))
-
-    @parameterized.expand(
-        [
-            (
-                "home",
-                Mock(return_value=Path.home().joinpath(Path("config/conf.conf"))),
-                Path("/git/repo/home/config/conf.conf"),
-            ),
-            (
-                "not home",
-                Mock(return_value=Path("/etc/conf.conf")),
-                Path("/git/repo/etc/conf.conf"),
-            ),
+        print_calls = [
+            unittest.mock.call("\nFiles under gikkon control:"),
+            unittest.mock.call("/file1.txt"),
+            unittest.mock.call("/file2.txt"),
         ]
-    )
-    @patch("backuper.Path.mkdir")
-    @patch("backuper.Backuper.copy")
-    def test_add(self, _, path_in, path_out, mock_copy, mock_mkdir):
-        mock_path = Mock()
-        mock_path.resolve = path_in
-
-        self.backuper.add(mock_path)
-
-        mock_path.resolve.assert_called_once()
-        mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
-        mock_copy.assert_called_once_with(mock_path.resolve.return_value, path_out)
+        print_mock.assert_has_calls(print_calls, any_order=False)
 
 
-class TestCommit(TestBackuper):
-    def test_commit(self):
-        self.backuper.commit()
+class TestBackup(unittest.TestCase):
+    @patch("backuper.Backuper._revert_files")
+    @patch("backuper._select_files_to_revert")
+    @patch("backuper.GitWrapper.get_changed_files")
+    @patch("backuper.GitWrapper.discard_changes")
+    @patch("backuper.UserInput.ask_bool", return_value=True)
+    @patch("backuper.GitWrapper.commit_and_push")
+    @patch("backuper.GitWrapper.show_changes")
+    @patch("backuper.Backuper._copy_files")
+    @patch("backuper.GitWrapper.ensure_push")
+    def test_backup_commit(self, ensure_push_mock, copy_files_mock, show_changes_mock, commit_and_push_mock,
+                           ask_bool_mock, discard_changes_mock, get_changed_files_mock,
+                           select_files_to_revert_mock, revert_files_mock):
+        backuper = Backuper(Path("/some/repo"))
 
-        self.backuper.git.push_to_repo.assert_called_once()
+        backuper.backup(ask_rollback=True, delete_not_present=False)
+
+        ensure_push_mock.assert_called_once()
+        copy_files_mock.assert_called_once_with(False)
+        show_changes_mock.assert_called_once()
+        ask_bool_mock.assert_has_calls([unittest.mock.call(unittest.mock.ANY, default=True)])
+        commit_and_push_mock.assert_called_once()
+        discard_changes_mock.assert_not_called()
+        get_changed_files_mock.assert_not_called()
+        select_files_to_revert_mock.assert_not_called()
+        revert_files_mock.assert_not_called()
+
+    @patch("backuper.Backuper._revert_files")
+    @patch("backuper._select_files_to_revert")
+    @patch("backuper.GitWrapper.get_changed_files")
+    @patch("backuper.GitWrapper.discard_changes")
+    @patch("backuper.UserInput.ask_bool", side_effect=[False, True])
+    @patch("backuper.GitWrapper.commit_and_push")
+    @patch("backuper.GitWrapper.show_changes")
+    @patch("backuper.Backuper._copy_files")
+    @patch("backuper.GitWrapper.ensure_push")
+    def test_backup_abort_and_rollback(self, ensure_push_mock, copy_files_mock, show_changes_mock,
+                                       commit_and_push_mock,
+                                       ask_bool_mock, discard_changes_mock, get_changed_files_mock,
+                                       select_files_to_revert_mock, revert_files_mock):
+        backuper = Backuper(Path("/some/repo"))
+
+        backuper.backup(ask_rollback=True, delete_not_present=False)
+
+        ensure_push_mock.assert_called_once()
+        copy_files_mock.assert_called_once_with(False)
+        show_changes_mock.assert_called_once()
+        ask_bool_mock.assert_has_calls([unittest.mock.call(unittest.mock.ANY, default=True),
+                                        unittest.mock.call(unittest.mock.ANY, default=False)])
+        commit_and_push_mock.assert_not_called()
+        discard_changes_mock.assert_called_once()
+        get_changed_files_mock.assert_called_once()
+        select_files_to_revert_mock.assert_called_once_with(get_changed_files_mock.return_value)
+        revert_files_mock.assert_called_once_with(select_files_to_revert_mock.return_value)
+
+    @patch("backuper.GitWrapper.ensure_push")
+    @patch("backuper.GitWrapper.show_changes", return_value=False)
+    @patch("backuper.GitWrapper.commit_and_push")
+    @patch("backuper.GitWrapper.discard_changes")
+    @patch("backuper.Backuper._copy_files")
+    @patch("backuper.Backuper._revert_files")
+    @patch("backuper.UserInput.ask_bool")
+    def test_backup_no_changes(self, ask_bool_mock, revert_files_mock, copy_files_mock, discard_changes_mock,
+                               commit_and_push_mock, show_changes_mock, ensure_push_mock):
+        backuper = Backuper(Path("test_repo"))
+        backuper.backup()
+
+        ensure_push_mock.assert_called_once()
+        copy_files_mock.assert_called_once_with(False)
+        show_changes_mock.assert_called_once()
+
+        commit_and_push_mock.assert_not_called()
+        discard_changes_mock.assert_not_called()
+        revert_files_mock.assert_not_called()
+        ask_bool_mock.assert_not_called()
+
+    @patch("backuper.GitWrapper.ensure_push")
+    @patch("backuper.GitWrapper.show_changes", return_value=True)
+    @patch("backuper.GitWrapper.commit_and_push")
+    @patch("backuper.GitWrapper.discard_changes")
+    @patch("backuper.Backuper._copy_files")
+    @patch("backuper.Backuper._revert_files")
+    @patch("backuper.UserInput.ask_bool", side_effect=[False, False])
+    def test_backup_decline_changes(self, ask_bool_mock, revert_files_mock, copy_files_mock, discard_changes_mock,
+                                    commit_and_push_mock, show_changes_mock, ensure_push_mock):
+        backuper = Backuper(Path("test_repo"))
+        backuper.backup()
+
+        ensure_push_mock.assert_called_once()
+        copy_files_mock.assert_called_once_with(False)
+        show_changes_mock.assert_called_once()
+
+        commit_and_push_mock.assert_not_called()
+        discard_changes_mock.assert_not_called()
+        revert_files_mock.assert_not_called()
+        ask_bool_mock.assert_called()
+
+    @patch("backuper.GitWrapper.ensure_push")
+    @patch("backuper.GitWrapper.show_changes", return_value=True)
+    @patch("backuper.GitWrapper.commit_and_push")
+    @patch("backuper.GitWrapper.discard_changes")
+    @patch("backuper.GitWrapper.get_changed_files", return_value=[("M", "file1.txt"), ("A", "file2.txt")])
+    @patch("backuper.Backuper._copy_files")
+    @patch("backuper.Backuper._revert_files")
+    @patch("backuper.UserInput.ask_bool", side_effect=[False, True])
+    @patch("backuper._select_files_to_revert", return_value=[("M", "file1.txt"), ("A", "file2.txt")])
+    def test_backup_decline_changes_and_rollback(self, select_files_to_revert_mock, ask_bool_mock, revert_files_mock,
+                                                 copy_files_mock, get_changed_files_mock, discard_changes_mock,
+                                                 commit_and_push_mock, show_changes_mock, ensure_push_mock):
+        backuper = Backuper(Path("test_repo"))
+        backuper.backup()
+
+        ensure_push_mock.assert_called_once()
+        copy_files_mock.assert_called_once_with(False)
+        show_changes_mock.assert_called_once()
+
+        commit_and_push_mock.assert_not_called()
+        discard_changes_mock.assert_called_once()
+        get_changed_files_mock.assert_called_once()
+        select_files_to_revert_mock.assert_called_once_with(get_changed_files_mock.return_value)
+        revert_files_mock.assert_called_once_with(select_files_to_revert_mock.return_value)
+        ask_bool_mock.assert_called()
 
 
-class TestPrintFiles(TestBackuper):
-    @classmethod
-    def setUpClass(cls):
-        cls.skipTest(cls, "logger does not implemented")
+class TestSelectFilesToRevert(unittest.TestCase):
+    changed_files = [
+        ("M", Path("file1.txt")),
+        ("A", Path("file2.txt")),
+        ("D", Path("file3.txt")),
+    ]
 
+    @patch("builtins.input", return_value="")
+    @patch("builtins.print")
+    def test_select_all_files(self, print_mock, input_mock):
+        result = _select_files_to_revert(self.changed_files)
+        self.assertEqual(result, self.changed_files)
 
-FILE_1 = Path("file1")
-FILE_2 = Path("file2")
-INNER_PATH = Path("inner_path")
-OUTER_PATH = Path("outer_path")
+    @patch("builtins.input", return_value="q")
+    @patch("builtins.print")
+    def test_quit_selection(self, print_mock, input_mock):
+        result = _select_files_to_revert(self.changed_files)
+        self.assertEqual(result, [])
 
-
-@patch("backuper.Backuper.files", return_value=[FILE_1, FILE_2])
-@patch(
-    "backuper.Backuper.absolute_pathes_from_inner",
-    return_value=Pathes(INNER_PATH, OUTER_PATH),
-)
-class TestSaveToGit(TestBackuper):
-    def test_no_files(self, _, mock_files):
-        mock_files.return_value = []
-        self.backuper.save_to_git()
-
-    @patch("backuper.Path.exists", return_value=False)
-    def test_outer_path_does_not_exists(self, mock_exists, mock_absolute, _):
-        self.backuper.save_to_git()
-
-        mock_absolute.assert_has_calls([call(FILE_1), call(FILE_2)])
-        self.assertEqual(mock_exists.call_count, 2)
-
-    @parameterized.expand(
-        [
-            (
-                "delete yes",
-                "Y",
-                True,
-            ),
-            (
-                "delete no",
-                "nononono",
-                False,
-            ),
+    @patch("builtins.input", return_value="1 3")
+    @patch("builtins.print")
+    def test_select_specific_files(self, print_mock, input_mock):
+        expected_result = [
+            self.changed_files[0],
+            self.changed_files[2],
         ]
-    )
-    @patch("backuper.Path.exists", return_value=False)
-    @patch("backuper.filecmp.cmp")
-    @patch("backuper.Backuper.delete")
-    @patch("builtins.input")
-    def test_delete(
-        self,
-        _,
-        user_input,
-        delete_expected,
-        mock_input,
-        mock_delete,
-        mock_cmp,
-        mock_exists,
-        mock_absolute,
-        mock_files,
-    ):
-        self.backuper.delete_unpresent = True
-        mock_input.return_value = user_input
-
-        self.backuper.save_to_git()
-
-        self.assertEqual(mock_input.call_count, 2)
-        mock_cmp.assert_not_called()
-        if delete_expected:
-            mock_delete.assert_has_calls([call(INNER_PATH)] * 2)
-        else:
-            mock_delete.assert_not_called()
-
-    @patch("backuper.Path.exists", return_value=False)
-    @patch("backuper.filecmp.cmp")
-    def test_outer_not_file(self, mock_cmp, mock_exists, mock_absolute, mock_files):
-        self.backuper.save_to_git()
-
-        mock_cmp.assert_not_called()
-
-    @patch("backuper.Path.exists", return_value=True)
-    @patch("backuper.Path.is_file", return_value=True)
-    @patch("backuper.filecmp.cmp", return_value=False)
-    @patch("backuper.Backuper.copy")
-    def test_cmp_different(
-        self, mock_copy, mock_cmp, mock_is_file, mock_exists, mock_absolute, mock_files
-    ):
-        self.backuper.save_to_git()
-
-        mock_copy.assert_has_calls([call(OUTER_PATH, INNER_PATH)] * 2)
+        result = _select_files_to_revert(self.changed_files)
+        self.assertEqual(result, expected_result)
 
 
-class TestAbsolutePath(TestBackuper):
-    def test_absolute_from_inner(self):
-        path = FILE_1
-        pathes = self.backuper.absolute_pathes_from_inner(path)
-        self.assertEqual(pathes.inner, self.backuper.git.path.joinpath(path))
-        self.assertEqual(pathes.outer, Path("/").joinpath(path))
+class TestCopy(unittest.TestCase):
+    @patch("shutil.copy")
+    def test_copy(self, shutil_copy_mock):
+        from_path = Path("from.txt")
+        to_path = Path("to.txt")
 
-    def test_absolute_from_inner_home(self):
-        path = Path.home().joinpath(FILE_2)
+        _copy(from_path, to_path)
 
-        pathes = self.backuper.absolute_pathes_from_inner(path)
-        self.assertEqual(pathes.inner, self.backuper.git.path.joinpath(path))
-        self.assertEqual(pathes.outer, path)
+        shutil_copy_mock.assert_called_once_with(from_path, to_path)
 
 
-class TestDelete(TestBackuper):
-    @patch("backuper.Path.unlink")
-    def test_delete(self, mock_unlink):
-        self.backuper.delete(self.path)
+class TestCopyFile(unittest.TestCase):
+    @patch("backuper.print")
+    @patch("backuper._copy")
+    @patch("backuper._has_write_access", return_value=True)
+    def test_copy_file_with_write_access(self, has_write_access_mock, copy_mock, print_mock):
+        src = Path("src.txt")
+        dst = Path("dst.txt")
 
-        mock_unlink.assert_called_once_with(missing_ok=True)
+        _copy_file(src, dst)
+
+        print_mock.assert_called_once_with(f"copying from {src} to {dst}")
+        has_write_access_mock.assert_called_once_with(dst)
+        copy_mock.assert_called_once_with(src, dst)
+
+    @patch("backuper.print")
+    @patch("backuper._copy_file_with_sudo")
+    @patch("backuper._has_write_access", return_value=False)
+    def test_copy_file_without_write_access(self, has_write_access_mock, copy_file_with_sudo_mock, print_mock):
+        src = Path("src.txt")
+        dst = Path("dst.txt")
+
+        _copy_file(src, dst)
+
+        print_mock.assert_called_once_with(f"copying from {src} to {dst}")
+        has_write_access_mock.assert_called_once_with(dst)
+        copy_file_with_sudo_mock.assert_called_once_with(src, dst)
 
 
-class TestCopy(TestBackuper):
-    @patch("backuper.shutil.copy")
-    def test_copy(self, mock_copy):
-        self.backuper.copy(FILE_1, FILE_2)
+class TestCopyFileWithSudo(unittest.TestCase):
+    @patch("backuper.subprocess.check_call")
+    @patch("backuper.print")
+    def test_copy_file_with_sudo_success(self, print_mock, check_call_mock):
+        src = "src.txt"
+        dst = "dst.txt"
 
-        mock_copy.assert_called_once_with(FILE_1, FILE_2)
+        _copy_file_with_sudo(src, dst)
+
+        check_call_mock.assert_called_once_with(["sudo", "cp", src, dst])
+        print_mock.assert_called_once_with(f"copying from {src} to {dst}")
+
+    @patch("backuper.sys.exit")
+    @patch("backuper.print")
+    @patch("backuper.subprocess.check_call", side_effect=subprocess.CalledProcessError(1, "sudo cp"))
+    def test_copy_file_with_sudo_failure(self, check_call_mock, print_mock, sys_exit_mock):
+        src = "src.txt"
+        dst = "dst.txt"
+
+        _copy_file_with_sudo(src, dst)
+
+        check_call_mock.assert_called_once_with(["sudo", "cp", src, dst])
+        print_mock.assert_has_calls([call(f"copying from {src} to {dst}"),
+                                     call(
+                                         "Error: Failed to copy file with sudo: Command 'sudo cp' returned non-zero exit status 1.")])
+        sys_exit_mock.assert_called_once_with(1)
 
 
-class TestFiles(TestBackuper):
-    pass
+class TestDeleteFile(unittest.TestCase):
+    @patch("backuper.print")
+    @patch("backuper.os.remove")
+    @patch("backuper._has_write_access", return_value=True)
+    def test_delete_file_with_write_access(self, has_write_access_mock, remove_mock, print_mock):
+        file_path = Path("test.txt")
+
+        _delete_file(file_path)
+
+        print_mock.assert_called_once_with(f"removing {file_path}")
+        remove_mock.assert_called_once_with(file_path)
+        has_write_access_mock.assert_called_once_with(file_path)
+
+    @patch("backuper.print")
+    @patch("backuper._delete_file_with_sudo")
+    @patch("backuper._has_write_access", return_value=False)
+    def test_delete_file_without_write_access(self, has_write_access_mock, delete_file_with_sudo_mock, print_mock):
+        file_path = Path("test.txt")
+
+        _delete_file(file_path)
+
+        print_mock.assert_called_once_with(f"removing {file_path}")
+        delete_file_with_sudo_mock.assert_called_once_with(file_path)
+        has_write_access_mock.assert_called_once_with(file_path)
+
+
+class TestDeleteFileWithSudo(unittest.TestCase):
+    @patch("backuper.subprocess.check_call")
+    def test_delete_file_with_sudo_success(self, check_call_mock):
+        file_path = "test.txt"
+
+        _delete_file_with_sudo(file_path)
+
+        check_call_mock.assert_called_once_with(["sudo", "rm", file_path])
+
+    @patch("backuper.sys.exit")
+    @patch("backuper.print")
+    @patch("backuper.subprocess.check_call", side_effect=subprocess.CalledProcessError(1, "rm"))
+    def test_delete_file_with_sudo_failure(self, check_call_mock, print_mock, sys_exit_mock):
+        file_path = "test.txt"
+
+        _delete_file_with_sudo(file_path)
+
+        check_call_mock.assert_called_once_with(["sudo", "rm", file_path])
+        print_mock.assert_called_once_with(
+            "Error: Failed to delete file with sudo: Command 'rm' returned non-zero exit status 1.")
+        sys_exit_mock.assert_called_once_with(1)
+
+
+if __name__ == '__main__':
+    unittest.main()

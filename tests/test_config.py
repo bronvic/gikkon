@@ -1,78 +1,124 @@
 import unittest
 from pathlib import Path
-from unittest import TestCase
 from unittest.mock import patch
 
-from config import Config, VariableRequired, WrongGitPath
-
-kwargs = {
-    "config": Path("config path"),
-    "path": Path("git path"),
-    "dry_run": True,
-    "remove": True,
-    "show_all": True,
-    "repo_pathes": True,
-    "command": "a command",
-    "file": Path("file name"),
-}
+from config import ConfigLoader, VariableRequired, AppConfig, Settings, WrongGitPath
 
 
-class TestConfig(TestCase):
-    pass
-
-
-@patch("config.toml.load", return_value="config")
-@patch("config.Config.get_variable", side_effect=["mypath"] + [False] * 4)
-class TestInit(TestConfig):
-    @patch("config.Path.exists", return_value=True)
-    def test_defaults(self, mock_git_path, mock_get, mock_load):
-        config = Config({})
-
-        mock_load.assert_called_once_with(config.DEFAILT_PATH)
-        mock_git_path.assert_called_once()
-
-        self.assertEqual(config.config, "config")
-        self.assertEqual(config.git_path, Path("mypath"))
-        self.assertFalse(config.dry_run)
-        self.assertFalse(config.remove)
-        self.assertFalse(config.show_all)
-        self.assertFalse(config.repo_pathes)
-        self.assertIsNone(config.command)
-        self.assertIsNone(config.fname)
-
-    @patch("config.Path.exists", return_value=True)
-    def test_from_args(self, mock_git_path, mock_get, mock_load):
-        config = Config(kwargs)
-
-        mock_load.assert_called_once_with(kwargs["config"])
-
-        self.assertEqual(config.git_path, kwargs["path"])
-        self.assertEqual(config.dry_run, kwargs["dry_run"])
-        self.assertEqual(config.remove, kwargs["remove"])
-        self.assertEqual(config.show_all, kwargs["show_all"])
-        self.assertEqual(config.repo_pathes, kwargs["repo_pathes"])
-        self.assertEqual(config.command, kwargs["command"])
-        self.assertEqual(config.fname, kwargs["file"])
-
-    @patch("config.Path.exists", return_value=False)
-    def test_wrong_git_path(self, mock_git_path, mock_get, mock_load):
-        with self.assertRaises(WrongGitPath):
-            config = Config({})
-
-
-class TestGetVariable(TestConfig):
-    @patch("config.Path.exists", return_value=True)
+class TestConfigLoader(unittest.TestCase):
     @patch("config.toml.load")
-    def setUp(self, mock_exists, mock_load):
-        self.config = Config(kwargs)
-        self.config.config = {"First": {"Second": "Third"}}
+    @patch("pathlib.Path.exists", return_value=True)
+    def test_load_config_success(self, exists_mock, toml_load_mock):
+        config_path = Path("config.toml")
+        config_loader = ConfigLoader(config_path)
 
-    def test_ok(self):
-        self.assertEqual(self.config.get_variable("First", "Second"), "Third")
-        self.assertEqual(
-            self.config.get_variable("First", "Kekond", "Fourth"), "Fourth"
-        )
+        config = config_loader.load_config()
 
-    def test_error(self):
-        with self.assertRaises(VariableRequired):
-            self.config.get_variable("First", "Kekond")
+        exists_mock.assert_called_once()
+        toml_load_mock.assert_called_once_with(config_path)
+        self.assertEqual(config, toml_load_mock.return_value)
+
+    @patch("pathlib.Path.exists", return_value=False)
+    def test_load_config_not_found(self, exists_mock):
+        config_path = Path("config.toml")
+        config_loader = ConfigLoader(config_path)
+
+        with self.assertRaises(FileNotFoundError) as context:
+            config_loader.load_config()
+
+        exists_mock.assert_called_once()
+        self.assertEqual(str(context.exception), f"Config file not found: {config_path}")
+
+
+class TestAppConfig(unittest.TestCase):
+    def setUp(self):
+        self.config = {
+            "section1": {
+                "var1": "value1",
+                "var2": "value2",
+            },
+            "section2": {
+                "var1": "value3",
+                "var3": "value4",
+            },
+        }
+        self.app_config = AppConfig(self.config)
+
+    def test_get_variable_success(self):
+        value = self.app_config.get_variable("section1", "var1")
+        self.assertEqual(value, "value1")
+
+    def test_get_variable_with_default(self):
+        value = self.app_config.get_variable("section1", "nonexistent_var", default="default_value")
+        self.assertEqual(value, "default_value")
+
+    def test_get_variable_key_error(self):
+        with self.assertRaises(VariableRequired) as context:
+            self.app_config.get_variable("section1", "nonexistent_var")
+
+        self.assertEqual(str(context.exception), "Variable 'nonexistent_var' in section 'section1' is required")
+
+
+class TestSettings(unittest.TestCase):
+    def setUp(self):
+        self.config = {
+            "General": {
+                "path": "/path/to/repo",
+                "dry_run": True,
+            },
+            "Backup": {
+                "remove": False,
+                "ask_rollback": True,
+            },
+            "List": {
+                "show_all": False,
+                "repo_paths": True,
+            },
+        }
+        self.app_config = AppConfig(self.config)
+
+    def test_settings_init_success(self):
+        args = {
+            "path": None,
+            "dry_run": None,
+            "remove": None,
+            "show_all": None,
+            "ask_rollback": None,
+            "repo_paths": None,
+            "command": "backup",
+            "file": None,
+        }
+        mock_path = Path("/path/to/repo")
+        with unittest.mock.patch("pathlib.Path.exists", return_value=True):
+            settings = Settings(self.app_config, args)
+
+        self.assertEqual(settings.git_path, mock_path)
+        self.assertEqual(settings.dry_run, True)
+        self.assertEqual(settings.remove, False)
+        self.assertEqual(settings.show_all, False)
+        self.assertEqual(settings.ask_rollback, True)
+        self.assertEqual(settings.repo_paths, True)
+        self.assertEqual(settings.command, "backup")
+        self.assertIsNone(settings.fname)
+
+    def test_settings_init_wrong_git_path(self):
+        args = {
+            "path": None,
+            "dry_run": None,
+            "remove": None,
+            "show_all": None,
+            "ask_rollback": None,
+            "repo_paths": None,
+            "command": "backup",
+            "file": None,
+        }
+        mock_path = Path("/path/to/repo")
+        with unittest.mock.patch("pathlib.Path.exists", return_value=False):
+            with self.assertRaises(WrongGitPath) as context:
+                Settings(self.app_config, args)
+
+            self.assertEqual(str(context.exception), f"Wrong Git path: {mock_path}")
+
+
+if __name__ == '__main__':
+    unittest.main()
