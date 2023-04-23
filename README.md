@@ -24,7 +24,7 @@ gikkon commit
 See `gikkon --help` or `gikkon <command> --help` for more detailes
 
 # Requirements
-* python >= 3.7
+* python >= 3.9
 * poetry >= 1.0
 
 # Installation

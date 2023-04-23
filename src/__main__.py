@@ -2,20 +2,18 @@ import argparse
 from pathlib import Path
 
 from backuper import Backuper
-from config import Commands, Config, VariableRequired, WrongGitPath
+from config import Commands, Settings, VariableRequired, WrongGitPath, load_settings
 
 
 def main() -> None:
-    "main configure argument parsers and run appropriate function"
+    """main configure argument parsers and run appropriate function"""
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-p", "--path", type=Path, help="path to git repo with backuped config files"
-    )
+    parser.add_argument("-p", "--path", type=Path, help="path to git repo with backuped config files")
     parser.add_argument(
         "-d",
         "--dry_run",
         action="store_true",
-        help="prints the functions that would be run without actually running it",
+        help="prints what would be done without actually doing it",
     )
     parser.add_argument("-c", "--config", type=Path, help="path to configuration file")
 
@@ -32,11 +30,14 @@ def main() -> None:
         action="store_true",
         help="removes files from repo which are not present in the system",
     )
+    parser_backup.add_argument(
+        "--ask_rollback",
+        action="store_true",
+        help="ask about rollback changed files on the system",
+    )
 
     # Commands.LIST
-    parser_list = subparser.add_parser(
-        Commands.LIST.value, help="list all files under backup control"
-    )
+    parser_list = subparser.add_parser(Commands.LIST.value, help="list all files under backup control")
     parser_list.add_argument(
         "-a",
         "--show_all",
@@ -45,28 +46,24 @@ def main() -> None:
     )
     parser_list.add_argument(
         "-r",
-        "--repo_pathes",
+        "--repo_paths",
         action="store_true",
         help="show files in git repo instead of system",
     )
 
     # Commands.ADD
-    parser_add = subparser.add_parser(
-        Commands.ADD.value, help="add file for backup controll"
-    )
-    parser_add.add_argument("file", type=Path, help="file to add to backup controll")
+    parser_add = subparser.add_parser(Commands.ADD.value, help="add file for backup control")
+    parser_add.add_argument("file", type=Path, help="file to add to backup control")
 
-    # Command.Commit
-    _ = subparser.add_parser(
-        Commands.COMMIT.value,
-        help="commit changes to git repo without adding anything new",
-    )
+    # Commands.ROLLBACK
+    subparser.add_parser(Commands.ROLLBACK.value, help="rollback changes on the system")
 
     try:
-        config = Config(vars(parser.parse_args()))
+        args = vars(parser.parse_args())
+        config = load_settings(args)
     except VariableRequired as ex:
         parser.print_usage()
-        parser.exit(-1, f"main.py: error: the following arguments are required: {ex}\n")
+        parser.exit(-1, f"error: the following arguments are required: {ex}\n")
     except WrongGitPath as ex:
         parser.exit(
             -2,
@@ -76,18 +73,14 @@ def main() -> None:
             Or use '--path' option\n",
         )
 
-    backuper = Backuper(
-        path=config.git_path, dry_run=config.dry_run, delete_unpresent=config.remove
-    )
+    backuper = Backuper(path=config.git_path, dry_run=config.dry_run)
 
     if config.command == Commands.BACKUP.value:
-        backuper.backup()
+        backuper.backup(ask_rollback=config.ask_rollback, delete_not_present=config.remove)
     elif config.command == Commands.LIST.value:
-        backuper.print_files(print_all=config.show_all, repo_pathes=config.repo_pathes)
+        backuper.print_files(print_all=config.show_all, repo_paths=config.repo_paths)
     elif config.command == Commands.ADD.value:
         backuper.add(config.fname)
-    elif config.command == Commands.COMMIT.value:
-        backuper.commit()
 
 
 if __name__ == "__main__":

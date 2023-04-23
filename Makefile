@@ -9,7 +9,7 @@ TGT_PATH = target
 all: update build install clean
 
 update:
-	poetry update --no-dev
+	poetry update --only main
 	poetry export --without-hashes > requirements.txt
 
 build:
@@ -27,7 +27,7 @@ build:
 install:
 	mkdir -p $(CON_PATH)
 	test -f $(CON_PATH)/$(CON_NAME) || cp ./$(CON_NAME) $(CON_PATH)
-	sudo install $(TGT_PATH)/$(NAME) $(SYS_PATH)
+	install -Dm755 $(TGT_PATH)/$(NAME) $(DESTDIR)$(SYS_PATH)/$(NAME)
 
 clean:
 	poetry env remove $(shell python --version | sed 's/^Python //' | sed 's/\.[0-9]\+//2')
