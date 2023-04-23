@@ -19,7 +19,7 @@ jobs:
     - run: poetry install
 
     - name: Generate coverage report
-      run: poetry run coverage run -m unittest tests/*.py
+      run: poetry run coverage run --source=. -m unittest discover tests
 
     - run: poetry run coverage xml
 
