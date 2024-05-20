@@ -4,6 +4,10 @@ Automate saving configs into git repository. Here and below *git repo* means you
 [![coverage](https://codecov.io/gh/bronvic/gikkon/branch/main/graph/badge.svg?token=FLC476YZTB)](https://codecov.io/gh/bronvic/gikkon)
 
 # Usage
+* Initilize gikkon
+```
+gikkon init
+```
 * List files under gikkon control
 ```
 gikkon list

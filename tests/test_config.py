@@ -2,15 +2,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from config import ConfigLoader, VariableRequired, AppConfig, Settings, WrongGitPath
+from config import ConfigManager, VariableRequired, AppConfig, Settings, WrongGitPath
 
 
-class TestConfigLoader(unittest.TestCase):
+class TestConfigManager(unittest.TestCase):
     @patch("config.toml.load")
     @patch("pathlib.Path.exists", return_value=True)
     def test_load_config_success(self, exists_mock, toml_load_mock):
         config_path = Path("config.toml")
-        config_loader = ConfigLoader(config_path)
+        config_loader = ConfigManager(config_path)
 
         config = config_loader.load_config()
 
@@ -21,7 +21,7 @@ class TestConfigLoader(unittest.TestCase):
     @patch("pathlib.Path.exists", return_value=False)
     def test_load_config_not_found(self, exists_mock):
         config_path = Path("config.toml")
-        config_loader = ConfigLoader(config_path)
+        config_loader = ConfigManager(config_path)
 
         with self.assertRaises(FileNotFoundError) as context:
             config_loader.load_config()
@@ -42,7 +42,7 @@ class TestAppConfig(unittest.TestCase):
                 "var3": "value4",
             },
         }
-        self.app_config = AppConfig(self.config)
+        self.app_config = AppConfig(self.config, "/path/to/repo")
 
     def test_get_variable_success(self):
         value = self.app_config.get_variable("section1", "var1")
@@ -75,7 +75,7 @@ class TestSettings(unittest.TestCase):
                 "repo_paths": True,
             },
         }
-        self.app_config = AppConfig(self.config)
+        self.app_config = AppConfig(self.config, "/path/to/repo")
 
     def test_settings_init_success(self):
         args = {

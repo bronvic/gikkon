@@ -9,6 +9,7 @@ from pathlib import Path
 import user_texts
 from git_wrapper import GitWrapper
 from interactor import UserInput
+from config import ConfigManager
 from validator import YES_VARIANTS
 
 HOME = "home"
@@ -133,6 +134,21 @@ class Backuper:
             print("\nFiles under gikkon control:")
             for file_path in filtered_files:
                 print(file_path)
+
+    def init_repo(self, config_path):
+        repo_url = UserInput.raw(user_texts.init_repo)
+        if not repo_url:
+            return
+
+        system_path = UserInput.raw(user_texts.init_local_path, default="~/.config/gikkon/config")
+        system_path = os.path.expanduser(system_path)
+        if not os.path.isabs(system_path):
+            raise ValueError("Please, use absolute path")
+
+        GitWrapper.clone(repo_url, system_path)
+
+        config_manager = ConfigManager(config_path)
+        config_manager.rewrite_repo_path(system_path)
 
     def _absolute_paths_from_inner(self, path: Path) -> Paths:
         str_path = str(path)

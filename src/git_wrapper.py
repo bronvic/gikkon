@@ -82,6 +82,13 @@ class GitWrapper:
 
         return changed_files
 
+    @staticmethod
+    def clone(repo, directory):
+        if not repo.endswith(".git"):
+            repo += ".git"
+
+        subprocess.run(["git", "clone", repo, directory])
+
     def _get_untracked_files(self) -> list[str]:
         git_untracked_files = subprocess.run(
             ["git", "ls-files", "--others"], capture_output=True, text=True, cwd=self.path

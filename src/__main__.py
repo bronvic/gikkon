@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 
 from backuper import Backuper
-from config import Commands, Settings, VariableRequired, WrongGitPath, load_settings
+from config import Commands, VariableRequired, WrongGitPath, load_settings
 
 
 def main() -> None:
@@ -55,8 +55,8 @@ def main() -> None:
     parser_add = subparser.add_parser(Commands.ADD.value, help="add file for backup control")
     parser_add.add_argument("file", type=Path, help="file to add to backup control")
 
-    # Commands.ROLLBACK
-    subparser.add_parser(Commands.ROLLBACK.value, help="rollback changes on the system")
+    # Commands.INIT
+    subparser.add_parser(Commands.INIT.value, help="initialize config repo")
 
     try:
         args = vars(parser.parse_args())
@@ -70,6 +70,7 @@ def main() -> None:
             f"\
             Wrong path to git repo: '{ex}'\n\
             Change path variable in config file (~/.config/gikkon/config.toml by default)\n\
+            Or run gikkon init\n\
             Or use '--path' option\n",
         )
 
@@ -81,6 +82,8 @@ def main() -> None:
         backuper.print_files(print_all=config.show_all, repo_paths=config.repo_paths)
     elif config.command == Commands.ADD.value:
         backuper.add(config.fname)
+    elif config.command == Commands.INIT.value:
+        backuper.init_repo(config_path=config.config_path)
 
 
 if __name__ == "__main__":
